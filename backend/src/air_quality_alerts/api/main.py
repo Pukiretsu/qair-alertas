@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import uuid
 from collections.abc import Callable
@@ -20,6 +21,8 @@ from air_quality_alerts.config import Settings
 from air_quality_alerts.domain.engine import AirQualityAlertEngine
 from air_quality_alerts.ingestion.playwright_downloader import SISAIREDownloader
 from air_quality_alerts.storage import JobRepository
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Air Quality Alerts Bogotá API",
@@ -351,13 +354,19 @@ def _download_by_station_and_calculate(
             station_downloads.append({"station_id": station_id, "status": "downloaded", "file": downloaded_path.name})
             _emit(report, f"Estación {station_id} descargada correctamente.", 5 + (index / total) * 45, "Descarga automática")
         except Exception as exc:  # pragma: no cover - requiere portal real
-            station_downloads.append({"station_id": station_id, "status": "failed", "error": str(exc)})
+            error = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
+            station_downloads.append({"station_id": station_id, "status": "failed", "error": error})
+            logger.warning("Falló la descarga SISAIRE de la estación %s", station_id, exc_info=True)
             if not continue_on_error:
                 raise
             _emit(report, f"Estación {station_id} no descargó. Se continúa con las demás.", 5 + (index / total) * 45, "Descarga automática")
 
     if not downloaded_paths:
-        raise RuntimeError("No se pudo descargar información de ninguna estación.")
+        first_failure = station_downloads[0]
+        raise RuntimeError(
+            f"No se pudo descargar información de ninguna estación. "
+            f"Estación {first_failure['station_id']}: {first_failure['error']}"
+        )
 
     _emit(report, "Unificando CSV descargados por estación.", 54, "Consolidación")
     combined_path = _combine_downloaded_files(downloaded_paths, result_dir / "auto_sampling_raw.csv")

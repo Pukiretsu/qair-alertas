@@ -1,321 +1,153 @@
 # Air Quality Alerts Bogotá
 
-Proyecto de portafolio para automatizar la descarga de datos de calidad del aire, calcular alertas PM2.5 y visualizar estaciones en un mapa tipo GIS de Bogotá.
+![AWS](https://img.shields.io/badge/Cloud-AWS-232F3E)
+![Terraform](https://img.shields.io/badge/IaC-Terraform-623CE4?logo=terraform)
+![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi)
+![React](https://img.shields.io/badge/Web-React%20%2B%20Vite-61DAFB?logo=react)
 
-La solución combina un backend Python con FastAPI, un motor de cálculo basado en Pandas, descarga automática con Playwright y una SPA en React construida con Vite + Tailwind. El repositorio incluye además `frontend/dist`, listo para publicar como sitio estático.
+**Air Quality Alerts Bogotá** es un proyecto de portafolio que transforma reportes de PM2.5 en estados de calidad del aire por estación. Permite cargar mediciones propias o descargar reportes de SISAIRE, seguir el cálculo desde un tablero con mapa interactivo y exportar la memoria que respalda cada resultado.
 
-## Funcionalidades principales
+## Arquitectura
 
-- Descarga automática de CSV desde un portal JSF/SISAIRE usando Playwright.
-- Motor de cálculo compatible con CSV, XLSX y XLS.
-- Normalización de columnas para formatos tipo SISAIRE, reportes horarios, reportes diarios y formatos manuales.
-- Cálculo de media móvil real de 24 horas por estación para reportes horarios, con soporte para reportes diarios SISAIRE ya preagregados.
-- Monitoreo de 48 lecturas posteriores cuando se detecta superación de umbral.
-- Declaración de alerta cuando, durante las 48 lecturas posteriores al dato candidato, más del 75% de las medias móviles permanece dentro del mismo rango normativo.
-- Finalización o recategorización cuando, después de un estado declarado, más del 75% de las 48 lecturas posteriores permanece por debajo del límite inferior del nivel vigente.
-- API FastAPI para carga manual, catálogo de estaciones, muestreo automático y descarga de resultados.
-- SPA React/Vite/Tailwind con experiencia tipo dashboard: modales, drag-and-drop, confirmaciones, mapa GIS interactivo y tabla filtrable.
-- Build estático generado en `frontend/dist` para despliegue rápido.
-- Catálogo GeoJSON de estaciones CAR/SISAIRE generado desde `SisaireCompletoCAR.csv`.
-- Memoria de cálculo en CSV y Excel (`.xlsx`).
-
-## Reglas de negocio PM2.5
-
-| Estado | Rango PM2.5 |
-|---|---:|
-| Normal | Menor a 38 |
-| Prevención | 38 - 55 |
-| Alerta | 56 - 150 |
-| Emergencia | Mayor o igual a 151 |
-
-Nota: en la Resolución 2254 de 2017, el umbral de emergencia `>= 355 µg/m³` corresponde a PM10. Para PM2.5 el umbral de emergencia es `>= 151 µg/m³`.
-
-La ventana de 24 horas requiere, por defecto, mínimo 18 lecturas válidas para evitar decisiones con datos incompletos. Este parámetro se puede ajustar por CLI, API o desde la app web.
-
-## Arquitectura del repositorio
-
-```text
-air-quality-alerts-bogota/
-├── backend/
-│   ├── src/air_quality_alerts/
-│   │   ├── api/                  # FastAPI: carga manual, muestreo automático y descargas
-│   │   ├── domain/               # Motor de cálculo de alertas
-│   │   ├── ingestion/            # Scraper/descargador Playwright
-│   │   ├── cli.py                # Comandos de consola
-│   │   └── config.py             # Settings por variables de entorno
-│   ├── tests/                    # Pruebas unitarias del motor
-│   ├── pyproject.toml
-│   └── Dockerfile
-├── frontend/
-│   ├── src/                      # SPA React + Tailwind
-│   ├── public/                   # GeoJSON de estaciones CAR/SISAIRE
-│   ├── dist/                     # Build estático listo para publicar
-│   ├── vite.config.js
-│   ├── tailwind.config.js
-│   └── package.json
-├── data/
-│   ├── catalog/                  # Catálogo único de estaciones con coordenadas
-│   ├── samples/                  # Datos livianos para demo y reporte SISAIRE
-│   ├── raw/                      # Descargas reales no versionadas
-│   └── processed/                # Datos procesados no versionados
-├── docs/                         # Documentación técnica
-├── outputs/                      # Memorias generadas no versionadas
-├── downloads/                    # CSV descargados no versionados
-└── Makefile                      # Comandos rápidos de desarrollo
+```mermaid
+flowchart LR
+    U[Usuario] --> CF[CloudFront HTTPS]
+    CF -->|Web| S3[S3 privado · React y Leaflet]
+    CF -->|/api/*| ALB[Application Load Balancer]
+    ALB --> API[ECS Fargate · FastAPI]
+    API --> DB[(RDS PostgreSQL)]
+    API --> EFS[(EFS · archivos generados)]
+    API -->|Playwright| SISAIRE[Portal SISAIRE]
 ```
 
-## Requisitos
+| Capa | Tecnología | Responsabilidad |
+|---|---|---|
+| Tablero | React, Vite, Tailwind CSS, Leaflet | Carga de archivos, mapa, filtros por estación, historial y descargas |
+| API | FastAPI | Ejecuta cálculos en segundo plano y expone su progreso al tablero |
+| Ingesta | Playwright, SISAIRE | Descarga y consolida reportes por estación |
+| Cálculo | Pandas, catálogo CAR/SISAIRE | Normaliza mediciones, completa coordenadas y evalúa persistencia por estación |
+| Persistencia | SQLite o PostgreSQL, archivos locales o EFS | Conserva sesiones, progreso y archivos de cada ejecución |
+| Infraestructura | Terraform, S3, CloudFront, ALB, ECS Fargate, ECR, RDS y EFS | Publica la SPA y la API bajo el mismo dominio |
 
-- Python 3.11 recomendado.
-- Node.js 18 o superior.
-- Playwright Chromium para la descarga automática.
+Más detalles en la [arquitectura técnica](docs/architecture.md).
 
-## Instalación backend
+## Ejecutar localmente
+
+Usa Python 3.11 y Node.js 20.19+ de la rama 20, o Node.js 22.12+. La carga manual funciona con los archivos de muestra. El muestreo automático requiere Chromium y acceso al portal SISAIRE.
+
+**API** · Desde la raíz, en una terminal:
 
 ```bash
 cd backend
-python -m venv .venv
-source .venv/bin/activate   # Linux/macOS
-# .venv\Scripts\activate   # Windows
-pip install -e ".[dev]"
-playwright install chromium
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
 cp .env.example .env
+air-quality-alerts api --reload
 ```
 
-## Ejecutar cálculo de demo
+La API queda en `http://localhost:8000`, con Swagger UI en `/docs` y el chequeo de salud en `/api/health`. Para habilitar el muestreo automático, instala el navegador con `playwright install chromium` en el entorno virtual y revisa `JSF_TARGET_URL` en `backend/.env`.
 
-Desde la carpeta `backend`:
-
-```bash
-air-quality-alerts calculate \
-  --input ../data/samples/ejemplo_pm25_bogota.csv \
-  --output ../outputs/memoria_demo.csv \
-  --excel-output ../outputs/memoria_demo.xlsx
-```
-
-O desde la raíz:
-
-```bash
-make calculate-demo
-```
-
-## Levantar API
-
-```bash
-cd backend
-air-quality-alerts api
-```
-
-Healthcheck:
-
-```text
-GET http://localhost:8000/api/health
-```
-
-Endpoints principales:
-
-```text
-GET  http://localhost:8000/api/stations/catalog
-POST http://localhost:8000/api/calculate
-POST http://localhost:8000/api/auto-sampling
-GET  http://localhost:8000/api/results/{result_id}/{filename}
-```
-
-### Carga manual
-
-`POST /api/calculate` recibe `multipart/form-data`:
-
-- `file`: archivo CSV, XLSX o XLS.
-- `pollutant`: por defecto `PM2.5`.
-- `min_valid_readings_24h`: por defecto `18`.
-
-### Muestreo automático
-
-`POST /api/auto-sampling` recibe JSON:
-
-```json
-{
-  "estaciones": ["29586", "31877", "8249"],
-  "contaminante": "PM2.5",
-  "fecha_inicio": "2026-01-01",
-  "fecha_fin": "2026-01-03",
-  "min_valid_readings_24h": 18,
-  "headed": false
-}
-```
-
-Para usar este flujo debes configurar `JSF_TARGET_URL` en `backend/.env` con la URL real del portal.
-
-## Ejecutar frontend en desarrollo
+**Web** · Desde la raíz, en otra terminal:
 
 ```bash
 cd frontend
-npm install
+npm ci
 cp .env.example .env
 npm run dev
 ```
 
-Abrir:
+Abre `http://localhost:5173` y carga [ejemplo_pm25_bogota.csv](data/samples/ejemplo_pm25_bogota.csv). También puedes generar la memoria por consola con `make calculate-demo` desde la raíz, con el entorno virtual activado. El comando escribe `outputs/memoria_demo.csv` y `outputs/memoria_demo.xlsx`.
 
-```text
-http://localhost:5173
-```
+Docker Compose ofrece una alternativa para levantar la API con PostgreSQL usando `docker compose up --build`. Ejecuta la web en otra terminal con los mismos comandos anteriores.
 
-La SPA permite:
+### Configuración
 
-1. Subir archivos CSV/Excel de forma manual con drag-and-drop.
-2. Ver el estado del proceso paso a paso con barra de progreso.
-3. Abrir modales de ayuda, confirmación de muestreo y resultados generados.
-4. Descargar memoria de cálculo en CSV/Excel, resumen por estación y GeoJSON.
-5. Activar muestreo automático con Playwright para descargar datos desde el portal.
-6. Poblar el mapa GIS con los resultados calculados.
-7. Filtrar la tabla por estación, ID o tier y abrir detalle por estación.
+| Variable | Uso |
+|---|---|
+| `JSF_TARGET_URL` | URL del formulario de consultas SISAIRE |
+| `DATABASE_URL` | Conexión PostgreSQL. Si queda vacía, el backend usa SQLite en `OUTPUTS_DIR/calculation_jobs.db` |
+| `OUTPUTS_DIR`, `DOWNLOADS_DIR` | Directorios de resultados y descargas |
+| `ALLOWED_ORIGINS` | Orígenes permitidos por CORS |
+| `VITE_API_BASE_URL` | URL de la API en desarrollo. En CloudFront se deja sin definir para usar rutas relativas `/api/*` |
 
-## Generar y previsualizar `dist`
+Consulta las plantillas de [backend](backend/.env.example) y [frontend](frontend/.env.example) para ver los valores locales.
 
-```bash
-cd frontend
-npm install
-npm run build
-npm run preview
-```
+## Reglas de cálculo y datos
 
-El build queda en:
+El motor calcula por estación una media móvil de 24 horas para los reportes horarios. Por defecto requiere 18 mediciones válidas. Cuando SISAIRE entrega un reporte diario preagregado, el motor usa directamente el promedio diario.
 
-```text
-frontend/dist
-```
+| Nivel | PM2.5 (µg/m³) |
+|---|---:|
+| Normal | Menos de 38 |
+| Prevención | Desde 38 hasta menos de 56 |
+| Alerta | Desde 56 hasta menos de 151 |
+| Emergencia | 151 o más |
 
-En esta entrega la carpeta `dist` ya está incluida para que puedas publicarla directamente en un hosting estático. Para usarla contra tu API local, levanta el backend en `http://localhost:8000` y abre el build con:
+Al detectar un nivel candidato, el motor evalúa las 48 lecturas siguientes. Declara el nivel si más del 75 % cae dentro del mismo rango. Para finalizar o recategorizar un nivel vigente, comprueba si más del 75 % de la ventana de seguimiento queda por debajo de su límite inferior.
 
-```bash
-cd frontend
-npm run preview
-```
+Para una carga manual en CSV, usa `Estacion`, `Fecha inicial` y `PM2.5`. Puedes incluir `LATITUD` y `LONGITUD`; el motor también busca coordenadas en el catálogo CAR/SISAIRE. La instalación incluye soporte para XLSX; los archivos XLS antiguos requieren instalar `xlrd` en el entorno del backend.
 
-## Descarga automática con Playwright por CLI
+- [Reporte horario](data/samples/reporte_sisaire_pm25_horario.csv) y [reporte diario](data/samples/reporte_sisaire_pm25.csv)
+- [Contrato de datos y columnas de salida](docs/data_contract.md)
 
-Configura la URL real del portal en `backend/.env`:
+Cada sesión de la API genera una memoria por lectura en CSV y Excel, un resumen con el último estado por estación y un GeoJSON para el mapa.
 
-```env
-JSF_TARGET_URL=https://sisaire.ideam.gov.co/ideam-sisaire-web/consultas.xhtml
-```
+## API y sesiones
 
-Ejemplo:
+| Método y ruta | Uso |
+|---|---|
+| `GET /api/health` | Comprueba la disponibilidad de la API |
+| `GET /api/stations/catalog` | Devuelve el catálogo en GeoJSON |
+| `GET /api/stations` | Lista las estaciones disponibles |
+| `POST /api/jobs/calculate` | Recibe un archivo mediante `multipart/form-data` con el campo `file` |
+| `POST /api/jobs/auto-sampling` | Inicia una descarga y cálculo con filtros de estaciones, contaminante y fechas |
+| `GET /api/jobs`, `GET /api/jobs/{job_id}` | Consulta el historial y el progreso de una sesión |
+| `GET /api/results/{result_id}/{filename}` | Descarga un archivo generado |
 
-```bash
-cd backend
-air-quality-alerts download \
-  --fecha-inicio 2026-01-01 \
-  --fecha-fin 2026-01-03 \
-  --contaminante PM2.5 \
-  --estaciones 29586 31877 8249 \
-  --filename consulta_pm25
-```
+Ambas rutas de creación de sesiones devuelven HTTP 202. Los endpoints síncronos equivalentes son `POST /api/calculate` y `POST /api/auto-sampling`. Swagger UI documenta los campos y valores predeterminados.
 
-El CSV se guarda en `downloads/`. Los selectores Playwright están aislados en `backend/src/air_quality_alerts/ingestion/playwright_downloader.py` para que puedan ajustarse fácilmente si el portal cambia.
+## CI y despliegue en AWS
 
-## Pruebas
+El repositorio conserva la configuración de GitHub Actions en un archivo inactivo. El [workflow archivado](.github/workflows/ci.yml.disabled) conserva la configuración de los dos jobs de validación.
 
-```bash
-cd backend
-PYTHONPATH=src pytest
-```
+| Job | Validación |
+|---|---|
+| `backend` | Instala el paquete con dependencias de desarrollo y ejecuta Ruff y Pytest en Python 3.11 |
+| `frontend` | Instala desde el lockfile con `npm ci` y compila la SPA con Node.js 20 |
 
-O desde la raíz:
+Para reproducir las comprobaciones desde la raíz:
 
 ```bash
 make backend-test
+(cd backend && ruff check src tests)
+make frontend-build
 ```
 
-## Contrato mínimo de datos
+El build web se genera en `frontend/dist/`. Para previsualizarlo, ejecuta `make frontend-preview` con la API local activa y la URL de desarrollo configurada antes de compilar.
 
-El motor intenta normalizar diferentes nombres de columnas. Para archivos manuales se recomienda usar:
+El despliegue se ejecuta por separado con Terraform y los scripts del repositorio. Sigue la [guía de infraestructura](infra/terraform/README.md) para configurar `backend_image_uri`, publicar la imagen en ECR y publicar el build web en S3. En AWS, CloudFront entrega la SPA desde un bucket privado mediante OAC y enruta `/api/*` al ALB. ECS obtiene la conexión de PostgreSQL desde Secrets Manager y envía los logs de la API a CloudWatch. Los outputs `frontend_cloudfront_url` y `api_health_url` identifican las URLs para verificar el despliegue.
 
-| Columna | Descripción |
-|---|---|
-| `Estacion` | Nombre de la estación |
-| `Fecha inicial` | Fecha/hora de la lectura |
-| `PM2.5` | Medición del contaminante |
-| `LATITUD` | Coordenada opcional para mapa |
-| `LONGITUD` | Coordenada opcional para mapa |
+La imagen Docker se construye desde la raíz con `backend/Dockerfile` e incluye el catálogo de estaciones para el muestreo automático.
 
-También soporta columnas tipo SISAIRE como `NOMBRE_EST`, `MSFL_CODE`, `MED_CONCENTRACION_ESTANDAR`, `FECHA_INICIO`, `FECHA_FINAL`, `LATITUD` y `LONGITUD`. Cuando el reporte viene como `Estacion, Fecha inicial, Fecha final, PM2.5`, el motor detecta si corresponde a reporte horario o diario y enriquece coordenadas desde `data/catalog/stations_sisaire_car.csv`.
+## Estructura del repositorio
 
-
-## Formatos SISAIRE soportados
-
-### Reporte horario
-
-El archivo `data/samples/reporte_sisaire_pm25_horario.csv` representa el formato horario recibido desde SISAIRE:
-
-```csv
-"Estacion","Fecha inicial","Fecha final","PM2.5"
-"CAJICA - UMNG","2026-05-30 10:00","2026-05-30 10:59","7.21"
+```text
+.
+├── .github/workflows/     # Configuración de CI archivada
+├── backend/
+│   ├── src/air_quality_alerts/
+│   │   ├── api/           # FastAPI y sesiones de cálculo
+│   │   ├── domain/        # Normalización y reglas PM2.5
+│   │   └── ingestion/     # Descargador Playwright
+│   └── tests/            # Pruebas del motor
+├── frontend/             # SPA con mapa y resultados
+├── data/                 # Catálogo y reportes de muestra
+├── docs/                 # Arquitectura y contrato de datos
+├── infra/terraform/      # Recursos de AWS
+├── scripts/              # Publicación en ECR y S3
+├── downloads/            # Descargas de SISAIRE
+├── outputs/              # Archivos generados
+├── docker-compose.yml
+└── Makefile
 ```
-
-Cuando `Fecha inicial` trae hora y `Fecha final` cierra la hora, el motor lo marca como `input_granularity=hourly` y `source_format=sisaire_hourly_report`. En este caso calcula `rolling_avg_24h` como media móvil real de las últimas 24 horas por estación y deja `reading_interval_minutes=60` para trazabilidad.
-
-Ejemplo:
-
-```bash
-cd backend
-air-quality-alerts calculate \
-  --input ../data/samples/reporte_sisaire_pm25_horario.csv \
-  --output ../outputs/memoria_reporte_sisaire_pm25_horario.csv \
-  --excel-output ../outputs/memoria_reporte_sisaire_pm25_horario.xlsx
-```
-
-### Reporte diario
-
-El archivo `data/samples/reporte_sisaire_pm25.csv` representa el formato diario recibido desde SISAIRE:
-
-```csv
-"Estacion","Fecha inicial","Fecha final","PM2.5"
-"CAJICA - UMNG","2026-05-30","","6.35909091"
-```
-
-Como este reporte no trae coordenadas, el motor cruza el nombre de estación contra el catálogo `data/catalog/stations_sisaire_car.csv`, generado desde `SisaireCompletoCAR.csv`. Para `CAJICA - UMNG`, por ejemplo, enriquece `station_id=31877`, `latitude=4.923668` y `longitude=-74.053345`.
-
-Cuando las fechas vienen solo a nivel día y `Fecha final` está vacía, el valor `PM2.5` se trata como una media diaria 24h ya preagregada por SISAIRE. Esto evita invalidar el cálculo por falta de 18 lecturas horarias en reportes diarios.
-
-## Salidas generadas
-
-El cálculo produce:
-
-- `memoria_calculo.csv`: resultado detallado por lectura.
-- `memoria_calculo.xlsx`: libro con resumen, memoria, parámetros y diccionario de datos.
-- `resumen_estaciones.csv`: último estado por estación.
-- `stations.geojson`: puntos geográficos para visualización GIS.
-
-Columnas clave de la memoria:
-
-| Columna | Descripción |
-|---|---|
-| `input_granularity` | Granularidad detectada: `hourly` o `daily_24h_average` |
-| `source_format` | Formato detectado: `sisaire_hourly_report`, `sisaire_daily_24h_report`, `car_long_report` o `manual_input` |
-| `reading_interval_minutes` | Resolución estimada de la lectura en minutos |
-| `rolling_avg_24h` | Media móvil de 24 horas o valor diario preagregado cuando el reporte SISAIRE viene diario |
-| `is_complete_24h` | Indica si hay suficientes lecturas válidas |
-| `tier_actual` | Normal, Prevención, Alerta o Emergencia |
-| `monitoring_status` | Estado del seguimiento |
-| `exceedance_ratio` | Porcentaje de persistencia sobre el umbral |
-| `declared_alert` | Indica si se declaró alerta |
-| `declared_tier` | Nivel de alerta declarado |
-| `station_current_status` | Estado actual usado por el mapa |
-
-## Stack
-
-- Python 3.11
-- Pandas
-- Playwright
-- FastAPI
-- React
-- Vite
-- Tailwind CSS
-- Leaflet + OpenStreetMap
-- Pytest
-
-## Nota Docker / Playwright
-
-El backend usa la imagen oficial `mcr.microsoft.com/playwright/python:v1.42.0-jammy`, alineada con `playwright==1.42.0` del `pyproject.toml`. Esta imagen ya incluye Chromium y las dependencias del navegador, por eso el Dockerfile no ejecuta `playwright install --with-deps chromium`; hacerlo sobre algunas bases Debian puede fallar por paquetes obsoletos como `ttf-unifont` o `ttf-ubuntu-font-family`.

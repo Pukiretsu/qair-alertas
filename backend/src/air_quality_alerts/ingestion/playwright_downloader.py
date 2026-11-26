@@ -59,7 +59,10 @@ class SISAIREDownloader:
 
             try:
                 logger.info("Navegando al portal: %s", self.target_url)
-                page.goto(self.target_url, wait_until="networkidle")
+                response = page.goto(self.target_url, wait_until="domcontentloaded")
+                if response is not None and not response.ok:
+                    raise RuntimeError(f"El portal SISAIRE respondió con HTTP {response.status}.")
+                page.locator('div[id="filtroForm:estacionesSel"]').wait_for(state="visible")
                 self._wait_until_loaded(page)
                 self._select_estaciones(page)
                 self._select_contaminante(page)

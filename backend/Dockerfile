@@ -15,8 +15,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml requirements.txt ./
-COPY src ./src
+COPY backend/pyproject.toml backend/requirements.txt backend/README.md ./
+COPY backend/src ./src
+COPY data/catalog/stations_sisaire_car.csv ./data/catalog/stations_sisaire_car.csv
 
 RUN pip install --upgrade pip \
     && pip install -e .
